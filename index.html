@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ace Attorney OBB Editor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --bg2: #f5f5f4;
+    --bg3: #eeede9;
+    --text: #1a1a18;
+    --text2: #6b6b67;
+    --text3: #9b9b96;
+    --border: rgba(0,0,0,0.12);
+    --border2: rgba(0,0,0,0.22);
+    --info-bg: #e6f1fb;
+    --info-text: #185fa5;
+    --info-border: rgba(24,95,165,0.3);
+    --success-text: #0f6e56;
+    --warn-text: #854f0b;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --mono: ui-monospace, 'Cascadia Code', 'Fira Mono', monospace;
+    --sans: system-ui, -apple-system, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1a;
+      --bg2: #242422;
+      --bg3: #2c2c2a;
+      --text: #f0efe8;
+      --text2: #9b9b96;
+      --text3: #6b6b67;
+      --border: rgba(255,255,255,0.10);
+      --border2: rgba(255,255,255,0.18);
+      --info-bg: #0c3055;
+      --info-text: #85b7eb;
+      --info-border: rgba(133,183,235,0.3);
+      --success-text: #5dcaa5;
+      --warn-text: #fac775;
+    }
+  }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg3);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 1.5rem;
+  }
+
+  h1 { font-size: 20px; font-weight: 500; }
+  h2 { font-size: 16px; font-weight: 500; }
+
+  .app { max-width: 1100px; margin: 0 auto; }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+  }
+  .toolbar h1 { flex: 1; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    border: 0.5px solid var(--border2);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--sans);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .12s;
+  }
+  .btn:hover { background: var(--bg2); }
+  .btn:active { transform: scale(.98); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn.primary {
+    background: var(--info-bg);
+    color: var(--info-text);
+    border-color: var(--info-border);
+  }
+  .btn.primary:hover { opacity: .85; }
+  .btn.success {
+    background: rgba(15,110,86,0.12);
+    color: var(--success-text);
+    border-color: rgba(15,110,86,0.3);
+  }
+
+  /* Drop zone */
+  .drop-zone {
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius-lg);
+    padding: 3rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    background: var(--bg);
+    transition: background .15s, border-color .15s;
+    margin-bottom: 1.25rem;
+  }
+  .drop-zone:hover, .drop-zone.drag {
+    background: var(--bg2);
+    border-color: var(--info-border);
+  }
+  .drop-zone .icon { font-size: 36px; margin-bottom: .5rem; }
+  .drop-zone p { color: var(--text2); font-size: 13px; margin-top: .3rem; }
+
+  /* Info bar */
+  .info-bar {
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: .6rem 1rem;
+    font-size: 13px;
+    color: var(--text2);
+    margin-bottom: 1.25rem;
+  }
+  .info-bar b { color: var(--text); font-weight: 500; }
+
+  /* Main pane */
+  .pane {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 1rem;
+    align-items: start;
+  }
+
+  @media (max-width: 680px) {
+    .pane { grid-template-columns: 1fr; }
+  }
+
+  /* Tree */
+  .tree-panel {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .tree-header {
+    padding: .5rem .9rem;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    border-bottom: 0.5px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 1;
+  }
+  .tree-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: .38rem .9rem;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 0.5px solid var(--border);
+    user-select: none;
+    transition: background .1s;
+  }
+  .tree-item:hover { background: var(--bg2); }
+  .tree-item.selected { background: var(--info-bg); color: var(--info-text); }
+  .tree-item.folder { font-weight: 500; }
+  .tree-item .indent { display: inline-block; width: 14px; flex-shrink: 0; }
+  .tree-count { font-size: 11px; }
+
+  /* Detail panel */
+  .detail-panel {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .detail-header {
+    padding: .6rem 1rem;
+    font-size: 13px;
+    font-weight: 500;
+    border-bottom: 0.5px solid var(--border);
+    color: var(--text2);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 1;
+  }
+  .detail-body { padding: 1rem; }
+
+  /* File rows */
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: .5rem .75rem;
+    border-radius: var(--radius);
+    border: 0.5px solid var(--border);
+    background: var(--bg2);
+    margin-bottom: 5px;
+    flex-wrap: wrap;
+  }
+  .file-row:hover { border-color: var(--border2); }
+  .fname {
+    flex: 1;
+    font-size: 13px;
+    font-family: var(--mono);
+    word-break: break-all;
+    min-width: 120px;
+  }
+  .fsize { font-size: 12px; color: var(--text2); white-space: nowrap; }
+  .fext {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .action-btn {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: var(--radius);
+    border: 0.5px solid var(--border2);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+    font-family: var(--sans);
+    transition: background .1s;
+  }
+  .action-btn:hover { background: var(--bg3); }
+  .action-btn.replaced { color: var(--success-text); border-color: rgba(15,110,86,0.35); }
+  .action-btn.dl { color: var(--info-text); border-color: var(--info-border); }
+
+  /* Search */
+  .search-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: .75rem;
+  }
+  .search-wrap input {
+    flex: 1;
+    padding: .35rem .7rem;
+    border-radius: var(--radius);
+    border: 0.5px solid var(--border2);
+    background: var(--bg2);
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--sans);
+    outline: none;
+  }
+  .search-wrap input:focus { box-shadow: 0 0 0 2px var(--info-border); }
+
+  /* Single file detail */
+  .detail-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .detail-table td { padding: 5px 0; vertical-align: top; }
+  .detail-table td:first-child { color: var(--text2); width: 110px; }
+  .detail-table td code { font-family: var(--mono); font-size: 12px; }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1rem;
+    color: var(--text2);
+    font-size: 14px;
+    gap: .5rem;
+    text-align: center;
+  }
+  .empty-state .icon { font-size: 32px; }
+
+  .mod-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--warn-text);
+  }
+
+  /* Badge colors (light only; dark mode uses same bg since it's subtle) */
+  .ext-ogg  { background:#FAEEDA; color:#854F0B }
+  .ext-arc  { background:#E6F1FB; color:#185FA5 }
+  .ext-gui  { background:#EEEDFE; color:#534AB7 }
+  .ext-prp  { background:#EAF3DE; color:#3B6D11 }
+  .ext-swf  { background:#FCEBEB; color:#A32D2D }
+  .ext-srq  { background:#E1F5EE; color:#0F6E56 }
+  .ext-stqr { background:#EEEDFE; color:#26215C }
+  .ext-uik  { background:#FBEAF0; color:#993556 }
+  .ext-tex  { background:#FBEAF0; color:#72243E }
+  .ext-sbk  { background:#FAECE7; color:#993C1D }
+  .ext-gmd  { background:#F1EFE8; color:#444441 }
+  .ext-sdl  { background:#E1F5EE; color:#04342C }
+  .ext-efl  { background:#FAEEDA; color:#412402 }
+  .ext-ean  { background:#FAEEDA; color:#633806 }
+  .ext-mod  { background:#EEEDFE; color:#3C3489 }
+  .ext-mrl  { background:#E6F1FB; color:#0C447C }
+  .ext-xfs  { background:#EAF3DE; color:#27500A }
+  .ext-lmt  { background:#E1F5EE; color:#085041 }
+  .ext-e2d  { background:#FBEAF0; color:#72243E }
+  .ext-lcm  { background:#FAECE7; color:#712B13 }
+  .ext-sbc  { background:#FCEBEB; color:#791F1F }
+  .ext-gfd  { background:#EAF3DE; color:#173404 }
+  .ext-mfx  { background:#FAECE7; color:#4A1B0C }
+  .ext-bin  { background:#F1EFE8; color:#5F5E5A }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="toolbar">
+    <h1>⚖️ Ace Attorney OBB Editor</h1>
+    <span id="mod-badge" class="mod-badge" style="display:none">✏️ <span id="mod-num">0</span> replaced</span>
+    <button class="btn" id="clear-btn" style="display:none" onclick="clearFile()">✕ Clear</button>
+    <button class="btn primary" id="save-btn" style="display:none" onclick="saveObb()">⬇ Download OBB</button>
+  </div>
+
+  <div id="drop-zone" class="drop-zone"
+       onclick="document.getElementById('file-input').click()"
+       ondragover="onDragOver(event)"
+       ondragleave="onDragLeave(event)"
+       ondrop="onDrop(event)">
+    <div class="icon">📦</div>
+    <b style="font-size:15px">Drop the asset OBB file here</b>
+    <p>or click to browse &mdash; asset OBB only (not the video OBB)</p>
+    <p style="margin-top:.25rem;font-size:12px">Dual Destinies &amp; Spirit of Justice · DGS1 &amp; DGS2</p>
+  </div>
+  <input type="file" id="file-input" style="display:none" accept=".obb,.bin" onchange="loadFile(this.files[0])">
+
+  <div id="info-bar" class="info-bar" style="display:none"></div>
+
+  <div id="main-pane" class="pane" style="display:none">
+    <div class="tree-panel">
+      <div class="tree-header">Folders &amp; Files</div>
+      <div id="tree"></div>
+    </div>
+    <div class="detail-panel">
+      <div class="detail-header" id="detail-title">Select a folder or file</div>
+      <div class="detail-body" id="detail-body">
+        <div class="empty-state">
+          <div class="icon">📂</div>
+          <span>Select a folder or file from the tree</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─── CRC32 / JAMCRC ───────────────────────────────────────────────────────────
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[i] = c;
+  }
+  return t;
+})();
+
+// ─── Magic → extension ────────────────────────────────────────────────────────
+function detectExtension(bytes) {
+  const r = (off) => {
+    if (off + 4 > bytes.length) return '';
+    return String.fromCharCode(bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]);
+  };
+  const s = [r(0), r(4), r(8)];
+  if (s.some(x => x === 'OggS'))  return '.ogg';
+  if (s.some(x => x === 'ARC\0')) return '.arc';
+  if (s.some(x => x === 'GUI\0')) return '.gui';
+  if (s.some(x => x === 'PRPZ')) return '.prp';
+  if (s.some(x => x === 'FWSE')) return '.swf';
+  if (s.some(x => x === 'SRQR')) return '.srq';
+  if (s.some(x => x === 'STQR')) return '.stqr';
+  if (s.some(x => x === 'UIKC')) return '.uik';
+  if (s.some(x => x === 'TEX ')) return '.tex';
+  if (s.some(x => x === 'SBKR')) return '.sbk';
+  if (s.some(x => x === 'GMD\0')) return '.gmd';
+  if (s.some(x => x === 'SDL\0')) return '.sdl';
+  if (s.some(x => x === 'EFL\0')) return '.efl';
+  if (s.some(x => x === 'EAN\0')) return '.ean';
+  if (s.some(x => x === 'MOD\0')) return '.mod';
+  if (s.some(x => x === 'MRL\0')) return '.mrl';
+  if (s.some(x => x === 'XFS\0')) return '.xfs';
+  if (s.some(x => x === 'LMT\0')) return '.lmt';
+  if (s.some(x => x === 'E2D\0')) return '.e2d';
+  if (s.some(x => x === 'LCM\0')) return '.lcm';
+  if (s.some(x => x.startsWith('SBC'))) return '.sbc';
+  if (s.some(x => x === 'GFD\0')) return '.gfd';
+  if (s.some(x => x === 'MFX\0')) return '.mfx';
+  return '.bin';
+}
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let obbBuffer   = null;   // original ArrayBuffer
+let obbFileName = '';
+let files       = [];     // parsed file entries
+let folderTree  = {};     // ext-group → [fileIndex]
+let openFolders = new Set();
+let selectedNode = null;  // {type:'folder'|'file', key}
+let modCount    = 0;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function fmtSize(n) {
+  if (n < 1024)       return n + ' B';
+  if (n < 1048576)    return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(2) + ' MB';
+}
+
+function extClass(ext) {
+  return 'ext-' + ext.replace('.', '').toLowerCase();
+}
+
+function fileName(f) {
+  return f.pathHash.toString(16).toUpperCase().padStart(8, '0') + f.ext;
+}
+
+// ─── Parse OBB ────────────────────────────────────────────────────────────────
+function parseObb(buf, name) {
+  const view  = new DataView(buf);
+  const bytes = new Uint8Array(buf);
+  const HEADER = 0x10, ENTRY = 0x10;
+
+  const magic     = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+  const version   = view.getInt32(4, true);
+  const fileCount = view.getInt32(8, true);
+  const crc       = view.getUint32(12, true);
+
+  if (fileCount < 0 || fileCount > 200000)
+    throw new Error(`Unexpected file count (${fileCount}). Is this the correct OBB?`);
+
+  files = [];
+  for (let i = 0; i < fileCount; i++) {
+    const off      = HEADER + i * ENTRY;
+    const pathHash = view.getUint32(off,      true);
+    const offset   = view.getInt32 (off + 4,  true);
+    const size     = view.getInt32 (off + 8,  true);
+    const unkHash  = view.getUint32(off + 12, true);
+    const data     = new Uint8Array(buf, offset, size);
+    const ext      = detectExtension(data);
+    files.push({ index: i, pathHash, offset, size, unkHash, ext,
+                 data, replaced: false, replacedData: null, replacedName: null });
+  }
+
+  obbBuffer   = buf;
+  obbFileName = name;
+
+  // Build folder groups by extension
+  folderTree = {};
+  for (let i = 0; i < files.length; i++) {
+    const key = files[i].ext.toUpperCase().replace('.', '') || 'BIN';
+    if (!folderTree[key]) folderTree[key] = [];
+    folderTree[key].push(i);
+  }
+
+  openFolders  = new Set();
+  selectedNode = null;
+  modCount     = 0;
+
+  // Info bar
+  const total = files.reduce((a, f) => a + f.size, 0);
+  document.getElementById('info-bar').innerHTML =
+    `<span><b>${name}</b></span>
+     <span>Magic: <b>${magic}</b></span>
+     <span>Version: <b>${version}</b></span>
+     <span>Files: <b>${fileCount.toLocaleString()}</b></span>
+     <span>Size: <b>${fmtSize(total)}</b></span>
+     <span>Groups: <b>${Object.keys(folderTree).length}</b></span>`;
+
+  // Show UI
+  document.getElementById('drop-zone').style.display  = 'none';
+  document.getElementById('info-bar').style.display   = 'flex';
+  document.getElementById('main-pane').style.display  = 'grid';
+  document.getElementById('clear-btn').style.display  = '';
+  document.getElementById('save-btn').style.display   = '';
+
+  renderTree();
+  renderDetail();
+}
+
+// ─── Tree ─────────────────────────────────────────────────────────────────────
+function renderTree() {
+  let html = '';
+  for (const folder of Object.keys(folderTree).sort()) {
+    const count  = folderTree[folder].length;
+    const isOpen = openFolders.has(folder);
+    const isSel  = selectedNode?.type === 'folder' && selectedNode.key === folder;
+    html += `<div class="tree-item folder${isSel ? ' selected' : ''}" onclick="selectFolder('${folder}')">
+      <span>${isOpen ? '📂' : '📁'}</span>
+      <span style="flex:1">${folder}</span>
+      <span class="tree-count" style="color:${isSel ? 'inherit' : 'var(--text2)'}">${count}</span>
+    </div>`;
+    if (isOpen) {
+      for (const fi of folderTree[folder]) {
+        const f     = files[fi];
+        const isFSel = selectedNode?.type === 'file' && selectedNode.key === fi;
+        html += `<div class="tree-item file${isFSel ? ' selected' : ''}" onclick="selectFile(${fi})">
+          <span class="indent"></span>
+          <span style="font-size:13px">📄</span>
+          <span style="flex:1;font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${fileName(f)}
+          </span>
+          ${f.replaced ? '<span style="color:var(--success-text);font-size:10px">✓</span>' : ''}
+        </div>`;
+      }
+    }
+  }
+  document.getElementById('tree').innerHTML = html;
+}
+
+function selectFolder(folder) {
+  if (openFolders.has(folder)) openFolders.delete(folder);
+  else openFolders.add(folder);
+  selectedNode = { type: 'folder', key: folder };
+  renderTree();
+  renderDetail();
+}
+
+function selectFile(fi) {
+  selectedNode = { type: 'file', key: fi };
+  renderTree();
+  renderDetail();
+}
+
+// ─── Detail ───────────────────────────────────────────────────────────────────
+function renderDetail() {
+  const title = document.getElementById('detail-title');
+  const body  = document.getElementById('detail-body');
+
+  if (!selectedNode) {
+    title.textContent = 'Select a folder or file';
+    body.innerHTML = `<div class="empty-state"><div class="icon">📂</div><span>Select a folder or file from the tree</span></div>`;
+    return;
+  }
+
+  if (selectedNode.type === 'folder') {
+    const folder  = selectedNode.key;
+    const indices = folderTree[folder];
+    title.textContent = `${folder} — ${indices.length} file${indices.length !== 1 ? 's' : ''}`;
+    body.innerHTML = `
+      <div class="search-wrap">
+        <input id="folder-search" placeholder="Filter files…" oninput="filterFolder()">
+      </div>
+      <div id="folder-file-list">${renderFileRows(indices)}</div>`;
+  } else {
+    const fi = selectedNode.key;
+    const f  = files[fi];
+    const fn = fileName(f);
+    title.textContent = fn;
+    body.innerHTML = `
+      <table class="detail-table">
+        <tr><td>File name</td><td><code>${fn}</code></td></tr>
+        <tr><td>Path hash</td><td><code>0x${f.pathHash.toString(16).toUpperCase().padStart(8,'0')}</code></td></tr>
+        <tr><td>Type</td><td><span class="fext ${extClass(f.ext)}">${f.ext}</span></td></tr>
+        <tr><td>Offset</td><td><code>0x${f.offset.toString(16).toUpperCase()}</code></td></tr>
+        <tr><td>Size</td><td>${fmtSize(f.size)} (${f.size.toLocaleString()} bytes)</td></tr>
+        <tr><td>Unk hash</td><td><code>0x${f.unkHash.toString(16).toUpperCase().padStart(8,'0')}</code></td></tr>
+        <tr><td>Status</td><td>${f.replaced
+          ? `<span style="color:var(--success-text)">✓ Replaced with ${f.replacedName}</span>`
+          : '<span style="color:var(--text2)">Original</span>'}</td></tr>
+      </table>
+      <div style="display:flex;gap:8px;margin-top:1rem;flex-wrap:wrap">
+        <button class="btn success" onclick="downloadAsset(${fi})">⬇ Download asset</button>
+        <button class="btn${f.replaced ? ' success' : ''}" onclick="triggerReplace(${fi})">
+          ⬆ ${f.replaced ? 'Replace again' : 'Replace asset'}
+        </button>
+      </div>
+      <input type="file" id="replace-input-${fi}" style="display:none" onchange="doReplace(${fi}, this)">`;
+  }
+}
+
+function renderFileRows(indices) {
+  let html = '';
+  for (const fi of indices) {
+    const f  = files[fi];
+    const fn = fileName(f);
+    html += `<div class="file-row" id="frow-${fi}">
+      <span class="fext ${extClass(f.ext)}">${f.ext}</span>
+      <span class="fname">${fn}${f.replaced ? ' <span style="color:var(--success-text);font-size:11px">✓</span>' : ''}</span>
+      <span class="fsize">${fmtSize(f.size)}</span>
+      <button class="action-btn dl" onclick="downloadAsset(${fi})">⬇</button>
+      <button class="action-btn${f.replaced ? ' replaced' : ''}" onclick="triggerReplace(${fi})">
+        ⬆ ${f.replaced ? 'Replaced' : 'Replace'}
+      </button>
+      <input type="file" id="replace-input-${fi}" style="display:none" onchange="doReplace(${fi}, this)">
+    </div>`;
+  }
+  return html;
+}
+
+function filterFolder() {
+  const q       = document.getElementById('folder-search').value.toLowerCase();
+  const indices = folderTree[selectedNode.key];
+  const list    = document.getElementById('folder-file-list');
+  const shown   = q ? indices.filter(fi => fileName(files[fi]).toLowerCase().includes(q)) : indices;
+  list.innerHTML = renderFileRows(shown);
+}
+
+// Download asset 
+function downloadAsset(fi) {
+  const f    = files[fi];
+  const data = f.replaced ? f.replacedData : f.data;
+  const blob = new Blob([data], { type: 'application/octet-stream' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = fileName(f);
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Replace assets
+  function triggerReplace(fi) {
+  document.getElementById(`replace-input-${fi}`)?.click();
+}
+
+function doReplace(fi, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const data = new Uint8Array(e.target.result);
+    if (!files[fi].replaced) modCount++;
+    files[fi].replaced     = true;
+    files[fi].replacedData = data;
+    files[fi].replacedName = file.name;
+    files[fi].size         = data.length;
+    updateModBadge();
+    renderTree();
+    renderDetail();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function updateModBadge() {
+  const el = document.getElementById('mod-badge');
+  document.getElementById('mod-num').textContent = modCount;
+  el.style.display = modCount > 0 ? 'inline-flex' : 'none';
+}
+
+// Save OBB
+// Builds output as an array of typed-array chunks fed directly into Blob()
+// so there's no copy of the file in memory at once and hence preventing shit to fuck up.
+function saveObb() {
+  if (!obbBuffer) return;
+
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Building…';
+
+  // Use setTimeout so the UI can repaint before the heavy work starts
+  setTimeout(() => {
+    try {
+      _doSaveObb();
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '⬇ Download OBB';
+    }
+  }, 30);
+}
+
+function jamcrc(data) {
+  // JAMCRC = CRC32 without the final XOR (result stays inverted)
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++)
+    c = CRC_TABLE[(c ^ data[i]) & 0xFF] ^ (c >>> 8);
+  return c >>> 0;
+}
+
+function _doSaveObb() {
+  const origView  = new DataView(obbBuffer);
+  const origBytes = new Uint8Array(obbBuffer);
+  const HEADER = 0x10, ENTRY = 0x10;
+  const count  = files.length;
+
+  // Build header chunk (I don't know if this shit is accurate since game rejects it)
+  const headerBuf  = new ArrayBuffer(HEADER);
+  const headerView = new DataView(headerBuf);
+  const headerArr  = new Uint8Array(headerBuf);
+  headerArr[0] = origBytes[0]; headerArr[1] = origBytes[1];
+  headerArr[2] = origBytes[2]; headerArr[3] = origBytes[3];
+  headerView.setInt32 (4,  origView.getInt32 (4,  true), true);
+  headerView.setInt32 (8,  count,                         true);
+  headerView.setUint32(12, origView.getUint32(12, true), true);
+
+  // Resolve all file data — force a clean .slice() copy of every
+  // original chunk. f.data is a Uint8Array view with a non-zero
+  // byteOffset into obbBuffer; passing such views to Blob can
+  // produce wrong output in some browsers. .slice() gives a
+  // standalone zero-offset copy that is always serialised correctly.
+  const resolvedData = files.map(f =>
+    f.replaced ? f.replacedData : f.data.slice()
+  );
+
+  // Pre-calculate file offsets 
+  const offsets = new Int32Array(count);
+  let pos = fileDataOffset;
+  for (let i = 0; i < count; i++) {
+    offsets[i] = pos;
+    pos += resolvedData[i].length;
+  }
+
+  //  Build entry table — recompute unkHash as JAMCRC for replaced files
+  //  (the comment in ObbSupport says hashes are CRC32/JAMCRC; the game
+  //  likely verifies unkHash against the file contents on load)
+  const entryBuf  = new ArrayBuffer(count * ENTRY);
+  const entryView = new DataView(entryBuf);
+  for (let i = 0; i < count; i++) {
+    const f       = files[i];
+    const data    = resolvedData[i];
+    const unkHash = f.replaced ? jamcrc(data) : f.unkHash;
+    const off     = i * ENTRY;
+    entryView.setUint32(off,      f.pathHash,  true);
+    entryView.setInt32 (off + 4,  offsets[i],  true);
+    entryView.setInt32 (off + 8,  data.length, true);
+    entryView.setUint32(off + 12, unkHash,     true);
+  }
+
+  // Collect chunks 
+  const chunks = [headerBuf, entryBuf];
+  for (const data of resolvedData) chunks.push(data);
+
+  // Hand chunks to Blob(definitely didn’t get this idea from another project)
+  const blob = new Blob(chunks, { type: 'application/octet-stream' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = obbFileName.replace(/\.obb$/i, '') + '_patched.obb';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Delay revoke so the download has time to start
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// Drag & drop / file input
+function onDragOver(e) { e.preventDefault(); document.getElementById('drop-zone').classList.add('drag'); }
+function onDragLeave()  { document.getElementById('drop-zone').classList.remove('drag'); }
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+}
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try { parseObb(e.target.result, file.name); }
+    catch (err) { alert('Failed to parse OBB:\n' + err.message); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function clearFile() {
+  obbBuffer = null; files = []; folderTree = {};
+  openFolders = new Set(); selectedNode = null; modCount = 0;
+  document.getElementById('drop-zone').style.display  = '';
+  document.getElementById('info-bar').style.display   = 'none';
+  document.getElementById('main-pane').style.display  = 'none';
+  document.getElementById('clear-btn').style.display  = 'none';
+  document.getElementById('save-btn').style.display   = 'none';
+  document.getElementById('mod-badge').style.display  = 'none';
+  document.getElementById('file-input').value = '';
+}
+</script>
+</body>
+</html>
