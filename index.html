@@ -256,9 +256,11 @@
     align-items: center;
     gap: 8px;
     margin-bottom: .75rem;
+    flex-wrap: wrap;
   }
   .search-wrap input {
     flex: 1;
+    min-width: 140px;
     padding: .35rem .7rem;
     border-radius: var(--radius);
     border: 0.5px solid var(--border2);
@@ -342,7 +344,7 @@
     <div class="icon">📦</div>
     <b style="font-size:15px">Drop the asset OBB file here</b>
     <p>or click to browse &mdash; asset OBB only (not the video OBB)</p>
-    <p style="margin-top:.25rem;font-size:12px">Dual Destinies &amp; Spirit of Justice · DGS1 &amp; DGS2</p>
+    <p style="margin-top:.25rem;font-size:12px">Dual Destinies &amp; Spirit of Justice · DGS1 &amp; DGS2(untested)</p>
   </div>
   <input type="file" id="file-input" style="display:none" accept=".obb,.bin" onchange="loadFile(this.files[0])">
 
@@ -560,6 +562,9 @@ function renderDetail() {
     body.innerHTML = `
       <div class="search-wrap">
         <input id="folder-search" placeholder="Filter files…" oninput="filterFolder()">
+        <button class="btn success" onclick="downloadFolder('${folder}')">
+          ⬇ Download all ${folder} (ZIP)
+        </button>
       </div>
       <div id="folder-file-list">${renderFileRows(indices)}</div>`;
   } else {
@@ -616,7 +621,7 @@ function filterFolder() {
   list.innerHTML = renderFileRows(shown);
 }
 
-// Download asset 
+// ─── Download asset ───────────────────────────────────────────────────────────
 function downloadAsset(fi) {
   const f    = files[fi];
   const data = f.replaced ? f.replacedData : f.data;
@@ -629,8 +634,78 @@ function downloadAsset(fi) {
   URL.revokeObjectURL(url);
 }
 
-// Replace assets
-  function triggerReplace(fi) {
+// ─── Download a whole category as ZIP ─────────────────────────────────────────
+function crc32(data) { return (jamcrc(data) ^ 0xFFFFFFFF) >>> 0; } // standard CRC32 for ZIP
+
+function buildZip(entries) {               // entries: [{name, data:Uint8Array}]
+  const enc = new TextEncoder();
+  const chunks = [], central = [];
+  let offset = 0, cdSize = 0;
+
+  for (const e of entries) {
+    const nameBytes = enc.encode(e.name);
+    const len = e.data.length;
+    const crc = crc32(e.data);
+
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true);
+    lh.setUint16(4, 20, true);
+    lh.setUint16(6, 0x0800, true);         // UTF-8 names
+    lh.setUint16(8, 0, true);              // stored (no compression)
+    lh.setUint16(12, 0x21, true);          // date 1980-01-01
+    lh.setUint32(14, crc, true);
+    lh.setUint32(18, len, true);
+    lh.setUint32(22, len, true);
+    lh.setUint16(26, nameBytes.length, true);
+    chunks.push(lh.buffer, nameBytes, e.data);
+
+    const cd = new DataView(new ArrayBuffer(46));
+    cd.setUint32(0, 0x02014b50, true);
+    cd.setUint16(4, 20, true);
+    cd.setUint16(6, 20, true);
+    cd.setUint16(8, 0x0800, true);
+    cd.setUint16(14, 0x21, true);
+    cd.setUint32(16, crc, true);
+    cd.setUint32(20, len, true);
+    cd.setUint32(24, len, true);
+    cd.setUint16(28, nameBytes.length, true);
+    cd.setUint32(42, offset, true);
+    central.push(cd.buffer, nameBytes);
+
+    cdSize += 46 + nameBytes.length;
+    offset += 30 + nameBytes.length + len;
+  }
+
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, cdSize, true);
+  end.setUint32(16, offset, true);
+
+  return new Blob([...chunks, ...central, end.buffer], { type: 'application/zip' });
+}
+
+function downloadFolder(folder) {
+  const indices = folderTree[folder];
+  if (!indices || !indices.length) return;
+  const entries = indices.map(fi => {
+    const f = files[fi];
+    return { name: fileName(f), data: f.replaced ? f.replacedData : f.data.slice() };
+  });
+  const blob = buildZip(entries);
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `${obbFileName.replace(/\.obb$/i, '')}_${folder}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// ─── Replace assets ───────────────────────────────────────────────────────────
+function triggerReplace(fi) {
   document.getElementById(`replace-input-${fi}`)?.click();
 }
 
@@ -658,9 +733,9 @@ function updateModBadge() {
   el.style.display = modCount > 0 ? 'inline-flex' : 'none';
 }
 
-// Save OBB
+// ─── Save OBB ─────────────────────────────────────────────────────────────────
 // Builds output as an array of typed-array chunks fed directly into Blob()
-// so there's no copy of the file in memory at once and hence preventing shit to fuck up.
+// so there's no single giant copy of the file in memory at once.
 function saveObb() {
   if (!obbBuffer) return;
 
@@ -693,7 +768,7 @@ function _doSaveObb() {
   const HEADER = 0x10, ENTRY = 0x10;
   const count  = files.length;
 
-  // Build header chunk (I don't know if this shit is accurate since game rejects it)
+  // Build header chunk (not confirmed accurate — the game may reject it)
   const headerBuf  = new ArrayBuffer(HEADER);
   const headerView = new DataView(headerBuf);
   const headerArr  = new Uint8Array(headerBuf);
@@ -712,7 +787,10 @@ function _doSaveObb() {
     f.replaced ? f.replacedData : f.data.slice()
   );
 
-  // Pre-calculate file offsets 
+  // Pre-calculate file offsets
+  // (if the original had padding before the first file, swap this for:
+  //  Math.min(...files.map(f => f.offset)) )
+  const fileDataOffset = HEADER + count * ENTRY;
   const offsets = new Int32Array(count);
   let pos = fileDataOffset;
   for (let i = 0; i < count; i++) {
@@ -720,9 +798,7 @@ function _doSaveObb() {
     pos += resolvedData[i].length;
   }
 
-  //  Build entry table — recompute unkHash as JAMCRC for replaced files
-  //  (the comment in ObbSupport says hashes are CRC32/JAMCRC; the game
-  //  likely verifies unkHash against the file contents on load)
+  // Build entry table — recompute unkHash as JAMCRC for replaced files
   const entryBuf  = new ArrayBuffer(count * ENTRY);
   const entryView = new DataView(entryBuf);
   for (let i = 0; i < count; i++) {
@@ -736,11 +812,10 @@ function _doSaveObb() {
     entryView.setUint32(off + 12, unkHash,     true);
   }
 
-  // Collect chunks 
+  // Collect chunks
   const chunks = [headerBuf, entryBuf];
   for (const data of resolvedData) chunks.push(data);
 
-  // Hand chunks to Blob(definitely didn’t get this idea from another project)
   const blob = new Blob(chunks, { type: 'application/octet-stream' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
@@ -753,7 +828,7 @@ function _doSaveObb() {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-// Drag & drop / file input
+// ─── Drag & drop / file input ─────────────────────────────────────────────────
 function onDragOver(e) { e.preventDefault(); document.getElementById('drop-zone').classList.add('drag'); }
 function onDragLeave()  { document.getElementById('drop-zone').classList.remove('drag'); }
 function onDrop(e) {
@@ -764,6 +839,7 @@ function onDrop(e) {
 }
 
 function loadFile(file) {
+  if (!file) return;
   const reader = new FileReader();
   reader.onload = (e) => {
     try { parseObb(e.target.result, file.name); }
