@@ -344,7 +344,7 @@
     <div class="icon">📦</div>
     <b style="font-size:15px">Drop the asset OBB file here</b>
     <p>or click to browse &mdash; asset OBB only (not the video OBB)</p>
-    <p style="margin-top:.25rem;font-size:12px">Dual Destinies &amp; Spirit of Justice · DGS1 &amp; DGS2(untested)</p>
+    <p style="margin-top:.25rem;font-size:12px">Dual Destinies &amp; Spirit of Justice · DGS1 &amp; DGS2</p>
   </div>
   <input type="file" id="file-input" style="display:none" accept=".obb,.bin" onchange="loadFile(this.files[0])">
 
@@ -479,6 +479,8 @@ function parseObb(buf, name) {
   selectedNode = null;
   modCount     = 0;
 
+  analyzeObb(buf, fileCount, crc);
+
   // Info bar
   const total = files.reduce((a, f) => a + f.size, 0);
   document.getElementById('info-bar').innerHTML =
@@ -487,7 +489,10 @@ function parseObb(buf, name) {
      <span>Version: <b>${version}</b></span>
      <span>Files: <b>${fileCount.toLocaleString()}</b></span>
      <span>Size: <b>${fmtSize(total)}</b></span>
-     <span>Groups: <b>${Object.keys(folderTree).length}</b></span>`;
+     <span>Groups: <b>${Object.keys(folderTree).length}</b></span>
+     <span>Alignment: <b>0x${obbMeta.align.toString(16)}</b></span>
+     <span>Header CRC: <b>${obbMeta.crcMode || 'unknown'}</b></span>
+     <span>Entry hash: <b>${obbMeta.unkMode ? 'data CRC (' + obbMeta.unkMode + ')' : 'not a data CRC'}</b></span>`;
 
   // Show UI
   document.getElementById('drop-zone').style.display  = 'none';
@@ -501,6 +506,53 @@ function parseObb(buf, name) {
 }
 
 // ─── Tree ─────────────────────────────────────────────────────────────────────
+// ─── OBB layout analysis ──────────────────────────────────────────────────────
+let obbMeta = { align: 1, crcMode: null, unkMode: null };
+
+function crcRaw(parts) {                       // JAMCRC over several chunks
+  let c = 0xFFFFFFFF;
+  for (const d of parts)
+    for (let i = 0; i < d.length; i++) c = CRC_TABLE[(c ^ d[i]) & 0xFF] ^ (c >>> 8);
+  return c >>> 0;
+}
+const crcStd = (parts) => (crcRaw(parts) ^ 0xFFFFFFFF) >>> 0;
+
+function analyzeObb(buf, count, headerCrc) {
+  const bytes    = new Uint8Array(buf);
+  const tableEnd = 0x10 + count * 0x10;
+
+  // Alignment of file offsets
+  const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
+  let g = 0;
+  for (const f of files) g = gcd(g, f.offset);
+  let align = g ? (g & -g) : 1;
+  if (align > 0x1000) align = 0x1000;
+
+  // Which range does the header CRC cover?
+  let crcMode = null;
+  const tbl = [bytes.subarray(0x10, tableEnd)];
+  const all = [bytes.subarray(0x10)];
+  const cands = [
+    ['table-jam', () => crcRaw(tbl)], ['table-std', () => crcStd(tbl)],
+    ['rest-jam',  () => crcRaw(all)], ['rest-std',  () => crcStd(all)]
+  ];
+  for (const [m, fn] of cands) if (fn() === headerCrc) { crcMode = m; break; }
+
+  // Is unkHash a CRC of the file data?
+  let unkMode = null, tested = 0, jam = 0, std = 0;
+  for (const f of files) {
+    if (f.size === 0 || f.size > 2097152) continue;
+    const raw = crcRaw([f.data]);
+    if (raw === f.unkHash) jam++;
+    if (((raw ^ 0xFFFFFFFF) >>> 0) === f.unkHash) std++;
+    if (++tested >= 40) break;
+  }
+  if (tested && jam === tested) unkMode = 'jam';
+  else if (tested && std === tested) unkMode = 'std';
+
+  obbMeta = { align, crcMode, unkMode };
+}
+
 function renderTree() {
   let html = '';
   for (const folder of Object.keys(folderTree).sort()) {
@@ -763,60 +815,44 @@ function jamcrc(data) {
 }
 
 function _doSaveObb() {
-  const origView  = new DataView(obbBuffer);
-  const origBytes = new Uint8Array(obbBuffer);
+  // Layout-preserving save: every original byte stays exactly where it was.
+  // Replaced files are appended at the end (aligned like the original) and only
+  // their table entries are repointed. Header CRC / entry hash are only
+  // recomputed when analyzeObb() proved how the original computes them.
   const HEADER = 0x10, ENTRY = 0x10;
-  const count  = files.length;
+  const count     = files.length;
+  const origBytes = new Uint8Array(obbBuffer);
+  const tableEnd  = HEADER + count * ENTRY;
+  const align     = obbMeta.align || 1;
 
-  // Build header chunk (not confirmed accurate — the game may reject it)
-  const headerBuf  = new ArrayBuffer(HEADER);
-  const headerView = new DataView(headerBuf);
-  const headerArr  = new Uint8Array(headerBuf);
-  headerArr[0] = origBytes[0]; headerArr[1] = origBytes[1];
-  headerArr[2] = origBytes[2]; headerArr[3] = origBytes[3];
-  headerView.setInt32 (4,  origView.getInt32 (4,  true), true);
-  headerView.setInt32 (8,  count,                         true);
-  headerView.setUint32(12, origView.getUint32(12, true), true);
+  const header   = origBytes.slice(0, HEADER);
+  const entryBuf = origBytes.slice(HEADER, tableEnd);
+  const body     = origBytes.subarray(tableEnd);   // gap + original file data, untouched
+  const ev       = new DataView(entryBuf.buffer);
 
-  // Resolve all file data — force a clean .slice() copy of every
-  // original chunk. f.data is a Uint8Array view with a non-zero
-  // byteOffset into obbBuffer; passing such views to Blob can
-  // produce wrong output in some browsers. .slice() gives a
-  // standalone zero-offset copy that is always serialised correctly.
-  const resolvedData = files.map(f =>
-    f.replaced ? f.replacedData : f.data.slice()
-  );
-
-  // Pre-calculate file offsets
-  // (if the original had padding before the first file, swap this for:
-  //  Math.min(...files.map(f => f.offset)) )
-  const fileDataOffset = HEADER + count * ENTRY;
-  const offsets = new Int32Array(count);
-  let pos = fileDataOffset;
+  const appended = [];
+  let pos = origBytes.length;
   for (let i = 0; i < count; i++) {
-    offsets[i] = pos;
-    pos += resolvedData[i].length;
+    const f = files[i];
+    if (!f.replaced) continue;
+    const d   = f.replacedData;
+    const pad = (align - (pos % align)) % align;
+    if (pad) { appended.push(new Uint8Array(pad)); pos += pad; }
+    appended.push(d);
+    ev.setInt32(i * ENTRY + 4, pos,      true);
+    ev.setInt32(i * ENTRY + 8, d.length, true);
+    if (obbMeta.unkMode === 'jam') ev.setUint32(i * ENTRY + 12, crcRaw([d]), true);
+    if (obbMeta.unkMode === 'std') ev.setUint32(i * ENTRY + 12, crcStd([d]),  true);
+    pos += d.length;
   }
 
-  // Build entry table — recompute unkHash as JAMCRC for replaced files
-  const entryBuf  = new ArrayBuffer(count * ENTRY);
-  const entryView = new DataView(entryBuf);
-  for (let i = 0; i < count; i++) {
-    const f       = files[i];
-    const data    = resolvedData[i];
-    const unkHash = f.replaced ? jamcrc(data) : f.unkHash;
-    const off     = i * ENTRY;
-    entryView.setUint32(off,      f.pathHash,  true);
-    entryView.setInt32 (off + 4,  offsets[i],  true);
-    entryView.setInt32 (off + 8,  data.length, true);
-    entryView.setUint32(off + 12, unkHash,     true);
+  if (obbMeta.crcMode) {
+    const range = obbMeta.crcMode.startsWith('table') ? [entryBuf] : [entryBuf, body, ...appended];
+    const v = obbMeta.crcMode.endsWith('jam') ? crcRaw(range) : crcStd(range);
+    new DataView(header.buffer).setUint32(12, v, true);
   }
 
-  // Collect chunks
-  const chunks = [headerBuf, entryBuf];
-  for (const data of resolvedData) chunks.push(data);
-
-  const blob = new Blob(chunks, { type: 'application/octet-stream' });
+  const blob = new Blob([header, entryBuf, body, ...appended], { type: 'application/octet-stream' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href     = url;
@@ -824,7 +860,6 @@ function _doSaveObb() {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  // Delay revoke so the download has time to start
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
